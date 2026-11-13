@@ -1,10 +1,16 @@
-name: build-border-beam-shader
+name: build-metal
 
 on:
   push:
+    paths-ignore:
+      - 'build/**'
   workflow_dispatch:
 
 permissions: write-all
+
+concurrency:
+  group: build-metal
+  cancel-in-progress: true
 
 jobs:
   build:
@@ -12,52 +18,81 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Resolve Metal toolchain
+      - name: Ensure Metal toolchain
         run: |
           set -eux
           if ! xcrun -f metal >/dev/null 2>&1; then
+            # Xcode 16+ ships the Metal toolchain as a separate component
             xcodebuild -downloadComponent MetalToolchain || true
           fi
           xcrun -f metal
+          xcodebuild -version
 
-      - name: Compile metallib
+      - name: Compile shaders
         run: |
           set -eux
-          mkdir -p out
-          xcrun -sdk iphoneos metal -target air64-apple-ios17.0 -c BorderBeam.metal -o out/BorderBeam.iphoneos.air
-          xcrun -sdk iphoneos metal -target air64-apple-ios17.0 out/BorderBeam.iphoneos.air -o out/BorderBeam.iphoneos.metallib
-          xcrun -sdk iphonesimulator metal -target arm64-apple-ios17.0-simulator -c BorderBeam.metal -o out/BorderBeam.sim.air || true
-          xcrun -sdk iphonesimulator metal -target arm64-apple-ios17.0-simulator out/BorderBeam.sim.air -o out/BorderBeam.iphonesimulator.metallib || true
-          ls -l out
+          mkdir -p build
+          shopt -s nullglob
+          sources=(shaders/*.metal)
+          if [ ${#sources[@]} -eq 0 ]; then
+            echo 'no .metal sources under shaders/'
+            exit 0
+          fi
+          for src in "${sources[@]}"; do
+            name=$(basename "$src" .metal)
+            echo "::group::compile $name"
+            xcrun -sdk iphoneos metal -target air64-apple-ios17.0 -c "$src" -o "build/$name.iphoneos.air"
+            xcrun -sdk iphoneos metal -target air64-apple-ios17.0 "build/$name.iphoneos.air" -o "build/$name.iphoneos.metallib"
+            rm -f "build/$name.iphoneos.air"
+            if xcrun -sdk iphonesimulator metal -target arm64-apple-ios17.0-simulator -c "$src" -o "build/$name.sim.air"; then
+              xcrun -sdk iphonesimulator metal -target arm64-apple-ios17.0-simulator "build/$name.sim.air" -o "build/$name.iphonesimulator.metallib" || true
+              rm -f "build/$name.sim.air"
+            else
+              echo "simulator build skipped for $name"
+            fi
+            echo "::endgroup::"
+          done
+          ls -l build
+
+      - name: Index artifacts
+        run: |
+          set -eux
+          python3 - <<'PY'
+          import hashlib, json, os
+          artifacts = {}
+          for name in sorted(os.listdir('build')):
+              if not name.endswith('.metallib'):
+                  continue
+              data = open(os.path.join('build', name), 'rb').read()
+              artifacts[name] = {'size': len(data), 'sha256': hashlib.sha256(data).hexdigest()}
+          index = {
+              'commit': os.environ.get('GITHUB_SHA', ''),
+              'run': os.environ.get('GITHUB_RUN_ID', ''),
+              'artifacts': artifacts,
+          }
+          with open('build/index.json', 'w') as f:
+              json.dump(index, f, indent=2, sort_keys=True)
+          print(json.dumps(index, indent=2, sort_keys=True))
+          PY
 
       - name: Upload artifact
         uses: actions/upload-artifact@v4
         with:
-          name: BorderBeam-metallibs
-          path: out/*.metallib
+          name: metallibs
+          path: |
+            build/*.metallib
+            build/index.json
           if-no-files-found: error
 
-      - name: Commit metallib back to the repo
+      - name: Commit artifacts
         run: |
-          set -ux
-          mkdir -p build
-          cp out/BorderBeam.iphoneos.metallib build/ || true
-          cp out/BorderBeam.iphonesimulator.metallib build/ || true
+          set -u
           git config user.name shader-bot
           git config user.email shader-bot@users.noreply.github.com
-          git add build
-          git commit -m "build: metallib" || true
-          git push origin HEAD:refs/heads/main || echo PUSH_FAILED
-
-      - name: Report issue fallback
-        if: always()
-        run: |
-          set -ux
-          B64=$(base64 -i build/BorderBeam.iphoneos.metallib 2>/dev/null | tr -d '\n' | head -c 60000 || true)
-          [ -n "$B64" ] || B64=none
-          NUM=$(gh issue list --state all --search 'metallib-b64 in:title' --json number --jq '.[0].number' 2>/dev/null || true)
-          if [ -n "$NUM" ]; then
-            gh issue comment "$NUM" --body "run ${{ github.run_id }}\n\n$B64" || echo COMMENT_FAILED
-          else
-            gh issue create --title 'metallib-b64' --body "run ${{ github.run_id }}\n\n$B64" || echo ISSUE_FAILED
+          git add -f build
+          if git diff --cached --quiet; then
+            echo 'no artifact changes'
+            exit 0
           fi
+          git commit -m 'build: compile shaders [skip ci]'
+          git push

@@ -1,0 +1,54 @@
+name: build-border-beam-shader
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Resolve Metal toolchain
+        run: |
+          set -eux
+          if ! xcrun -f metal >/dev/null 2>&1; then
+            # Xcode 16+ ships the Metal toolchain as a separate component
+            xcodebuild -downloadComponent MetalToolchain || true
+          fi
+          xcrun -f metal
+          xcodebuild -version
+          xcrun -sdk iphoneos --show-sdk-version
+
+      - name: Compile metallib
+        run: |
+          set -eux
+          mkdir -p out
+          xcrun -sdk iphoneos metal -target air64-apple-ios17.0 -c BorderBeam.metal -o out/BorderBeam.iphoneos.air
+          xcrun -sdk iphoneos metal -target air64-apple-ios17.0 out/BorderBeam.iphoneos.air -o out/BorderBeam.iphoneos.metallib
+          xcrun -sdk iphonesimulator metal -target arm64-apple-ios17.0-simulator -c BorderBeam.metal -o out/BorderBeam.sim.air || true
+          xcrun -sdk iphonesimulator metal -target arm64-apple-ios17.0-simulator out/BorderBeam.sim.air -o out/BorderBeam.iphonesimulator.metallib || true
+          ls -l out
+
+      - name: Upload artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: BorderBeam-metallibs
+          path: out/*.metallib
+          if-no-files-found: error
+
+      - name: Publish release assets
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -eux
+          gh release delete shader-build --yes --cleanup-tag || true
+          gh release create shader-build \
+            out/BorderBeam.iphoneos.metallib \
+            out/BorderBeam.iphonesimulator.metallib \
+            --title "BorderBeam metallib" \
+            --notes "Precompiled with xcrun metal"

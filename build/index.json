@@ -1,0 +1,10 @@
+{
+  "artifacts": {
+    "BorderBeam.iphoneos.metallib": {
+      "sha256": "1f150359a41bfd7b0a7700f4af2442c166133bfc931d989e5a6aebdf6dc6fa79",
+      "size": 14232
+    }
+  },
+  "commit": "90301db48fd07a1fd440ce52ef8e72376a028567",
+  "run": "43393025656"
+}

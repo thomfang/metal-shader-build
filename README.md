@@ -1,7 +1,8 @@
 # metal-shader-build
 
-Compile Metal (MSL) shaders for the **[Scripting](https://scripting.fun)** app in CI — no Mac needed
-on the device side.
+> 仓库名还叫 `border-beam-shader`（改名后把下面链接里的 slug 换掉就行）。
+> Compile Metal (MSL) shaders for the **[Scripting](https://scripting.fun)** app in CI — you never need
+a Mac on the device side.
 
 SwiftUI shader effects in Scripting (`colorEffect`, `layerEffect`, `distortionEffect`) can only be driven
 by a `ShaderLibrary` built from a **precompiled `.metallib` on disk**. iOS *can* compile MSL at runtime
@@ -21,14 +22,15 @@ build/       compiled *.metallib + index.json (auto-committed by CI, do not edit
 
 1. Add `shaders/Foo.metal` and push.
 2. CI compiles it to `build/Foo.iphoneos.metallib` (plus `Foo.iphonesimulator.metallib` when the
-   simulator target builds). Failures show up as normal workflow errors.
+   simulator target builds). Compile errors show up as normal workflow failures.
 3. Download the artifact straight from `main`:
 
    ```
-   https://raw.githubusercontent.com/thomfang/metal-shader-build/main/build/Foo.iphoneos.metallib
+   https://raw.githubusercontent.com/thomfang/border-beam-shader/main/build/Foo.iphoneos.metallib
    ```
 
    `build/index.json` lists size and sha256 of everything so you can verify what you got.
+   The build is deterministic — the same source produces byte-identical output on later runs.
 4. Put the `.metallib` next to your manifest inside the script project (Scripting resolves manifest
    `libraries` entries relative to the manifest's folder), then:
 
@@ -64,8 +66,8 @@ build/       compiled *.metallib + index.json (auto-committed by CI, do not edit
 - The list must match the Metal signature one to one, in order. A mismatch fails at
   `ShaderLibrary.load` with `invalidSignature`.
 - Limits: manifest ≤ 32 KiB, metallib ≤ 8 MiB, ≤ 32 functions, ≤ 16 bound arguments per function.
-- `effect` is `colorEffect` for these; `layerEffect` / `distortionEffect` need `maxSampleOffset` at the
-  call site and one extra `image` argument.
+- No float arrays: pass colours as separate `float4` values plus a count, the way
+  `BorderBeam.metal` does.
 
 ## Local compile
 
@@ -84,7 +86,7 @@ xcrun -sdk iphoneos metal -target air64-apple-ios17.0 Foo.air -o Foo.iphoneos.me
 ## Included example
 
 `shaders/BorderBeam.metal` + `manifests/BorderBeam.json` — a `colorEffect` port of
-[ismnoiet/border-beam-ios](https://github.com/ismnoiet/border-beam-ios) (MIT). An animated comet that
-orbits a rounded rectangle / capsule / circle: signed-distance field, perimeter parameterisation by arc
+[ismnoiet/border-beam-ios](https://github.com/ismnoiet/border-beam-ios) (MIT): an animated comet that
+orbits a rounded rectangle / capsule / circle. Signed-distance field, perimeter parameterisation by arc
 length, 24 Gaussian blobs for the glow, one GPU pass. Palette arrives as five `float4` RGBA values
 because the manifest format has no float array.

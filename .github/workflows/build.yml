@@ -6,9 +6,11 @@ on:
 
 permissions:
   contents: write
+  issues: write
 
 jobs:
   build:
+    if: ${{ github.event_name == 'workflow_dispatch' || !startsWith(github.event.head_commit.message, 'build: metallib') }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
@@ -17,12 +19,9 @@ jobs:
         run: |
           set -eux
           if ! xcrun -f metal >/dev/null 2>&1; then
-            # Xcode 16+ ships the Metal toolchain as a separate component
             xcodebuild -downloadComponent MetalToolchain || true
           fi
           xcrun -f metal
-          xcodebuild -version
-          xcrun -sdk iphoneos --show-sdk-version
 
       - name: Compile metallib
         run: |
@@ -41,14 +40,27 @@ jobs:
           path: out/*.metallib
           if-no-files-found: error
 
-      - name: Publish release assets
-        env:
-          GH_TOKEN: ${{ github.token }}
+      - name: Commit metallib back to the repo
         run: |
-          set -eux
-          gh release delete shader-build --yes --cleanup-tag || true
-          gh release create shader-build \
-            out/BorderBeam.iphoneos.metallib \
-            out/BorderBeam.iphonesimulator.metallib \
-            --title "BorderBeam metallib" \
-            --notes "Precompiled with xcrun metal"
+          set -ux
+          mkdir -p build
+          cp out/BorderBeam.iphoneos.metallib build/ || true
+          cp out/BorderBeam.iphonesimulator.metallib build/ || true
+          git config user.name shader-bot
+          git config user.email shader-bot@users.noreply.github.com
+          git add build
+          git commit -m "build: metallib" || true
+          git push origin HEAD:refs/heads/main || echo PUSH_FAILED
+
+      - name: Report issue fallback
+        if: always()
+        run: |
+          set -ux
+          B64=$(base64 -i build/BorderBeam.iphoneos.metallib 2>/dev/null | tr -d '\n' | head -c 60000 || true)
+          [ -n "$B64" ] || B64=none
+          NUM=$(gh issue list --state all --search 'metallib-b64 in:title' --json number --jq '.[0].number' 2>/dev/null || true)
+          if [ -n "$NUM" ]; then
+            gh issue comment "$NUM" --body "run ${{ github.run_id }}\n\n$B64" || echo COMMENT_FAILED
+          else
+            gh issue create --title 'metallib-b64' --body "run ${{ github.run_id }}\n\n$B64" || echo ISSUE_FAILED
+          fi

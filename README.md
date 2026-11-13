@@ -82,6 +82,15 @@ xcrun -sdk iphoneos metal -target air64-apple-ios17.0 Foo.air -o Foo.iphoneos.me
   rejects with `unsupported` **before touching the file** — that gate lives in the host app, and nothing
   on the script side can work around it.
 
+## Notes
+
+- A push that does not change the compiled output is a no-op: CI still builds, sees no diff under
+  `build/`, and exits without committing.
+- The artifact commit carries `[skip ci]` and `build/**` is excluded from triggers, so the pipeline
+  cannot loop on itself.
+- Rebuilding is cheap (a few minutes on `macos-latest`); pull requests from forks do not run this
+  workflow with write permissions.
+
 ## Included example
 
 `shaders/BorderBeam.metal` + `manifests/BorderBeam.json` — a `colorEffect` port of

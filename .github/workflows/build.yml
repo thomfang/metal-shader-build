@@ -4,13 +4,10 @@ on:
   push:
   workflow_dispatch:
 
-permissions:
-  contents: write
-  issues: write
+permissions: write-all
 
 jobs:
   build:
-    if: ${{ github.event_name == 'workflow_dispatch' || !startsWith(github.event.head_commit.message, 'build: metallib') }}
     runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
